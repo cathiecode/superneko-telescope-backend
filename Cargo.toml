@@ -6,6 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+actix = "0.13.1"
+actix-web = "4.4.0"
+actix-web-actors = "4.2.0"
+actix-rt = "2"
 anyhow = { version = "1.0.75", features = ["backtrace"] }
 async-stream = "0.3.5"
 async-trait = "0.1.73"
@@ -19,7 +23,7 @@ reqwest = "0.11.20"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
 thiserror = "1.0.49"
-tokio = { version = "1.32.0", features = ["rt", "macros", "rt-multi-thread"] }
+tokio = { version = "1.32.0", features = ["rt", "macros", "rt-multi-thread", "sync"] }
 tokio-stream = "0.1.14"
 tokio-tungstenite = { version = "0.20.1", features = ["native-tls"] }
 url = "2.4.1"
