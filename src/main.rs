@@ -16,12 +16,15 @@ use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use timeline_stream::actors::timeline_streaming::TimelineStreamSupervisorActor;
+use types::json::Post;
 use url::Url;
 
 use crate::{timeline_stream::actors::timeline_streaming_websocket::TimelineStreamWebsocket, types::Host};
 
+mod http_client;
 mod timeline_stream;
 mod types;
+mod misskey;
 
 struct GetTimelineOption {
     until: Option<i32>,
@@ -35,40 +38,17 @@ type SingleChannelSender<T> = tokio::sync::mpsc::Sender<T>;
 
 type Date = chrono::DateTime<chrono::Utc>;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct Instance {
-    name: String,
-    softwareName: String,
-    iconUrl: String,
-    faviconUrl: String,
-    themeColor: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct User {
-    name: String,
-    username: String,
-    host: String,
-    instance: Instance,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct TimelineItem {
-    //created_at: Date,
-    user: User,
-}
-
-type Timeline = Vec<TimelineItem>;
-
+/*
 #[async_trait]
 trait StreamingStrategy {
-    fn event_receiver(self: Box<Self>) -> SingleChannelReceiver<Timeline>;
+    fn event_receiver(self: Box<Self>) -> SingleChannelReceiver<Post>;
     fn get_strategy_id(&self) -> &'static str;
 }
+ */
 
-struct MisskeyDirectStreaming {
-    receiver: SingleChannelReceiver<Timeline>,
-}
+/*struct MisskeyDirectStreaming {
+    receiver: SingleChannelReceiver<Post>,
+}*/
 
 #[derive(Debug, Deserialize)]
 struct NodeInfoSoftware {
@@ -81,6 +61,7 @@ struct NodeInfo {
     software: NodeInfoSoftware,
 }
 
+/*
 impl MisskeyDirectStreaming {
     async fn new(mut host: Url) -> Result<Self> {
         // NOTE: Constant literal changes does not returns error.
@@ -157,91 +138,7 @@ impl MisskeyDirectStreaming {
         })
     }
 }
-
-mod http_client {
-    use std::{sync::Mutex, time::Duration};
-
-    use log::{debug, warn};
-    use once_cell::sync::OnceCell;
-    use reqwest;
-    use tokio::net::TcpStream;
-    use tokio_tungstenite::{
-        tungstenite::{handshake::client::Response, Error},
-        MaybeTlsStream, WebSocketStream,
-    };
-    use url::Url;
-
-    struct CircuitBreaker {
-        read_count_per_sec: i32,
-        overload_read_count_per_sec: i32,
-        overload_trelance_sec: i32,
-    }
-
-    impl CircuitBreaker {
-        fn global() -> &'static Mutex<CircuitBreaker> {
-            static CIRCUIT_BREAKER_GLOBAL: OnceCell<Mutex<CircuitBreaker>> = OnceCell::new();
-
-            if let Some(instance) = CIRCUIT_BREAKER_GLOBAL.get() {
-                return instance;
-            } else {
-                debug!("Circuit breaker initialized.");
-                let result = CIRCUIT_BREAKER_GLOBAL.set(Mutex::new(Self {
-                    read_count_per_sec: 0,
-                    overload_read_count_per_sec: 0,
-
-                    overload_trelance_sec: 5,
-                }));
-
-                if let Err(_) = result {
-                    CIRCUIT_BREAKER_GLOBAL.get().unwrap();
-                }
-
-                std::thread::spawn(|| {
-                    // NOTE: Block for not to lock instance too long
-                    loop {
-                        {
-                            let mut instance =
-                                CIRCUIT_BREAKER_GLOBAL.get().unwrap().lock().unwrap();
-
-                            if instance.read_count_per_sec >= instance.overload_read_count_per_sec {
-                                instance.overload_read_count_per_sec += 1;
-                                instance.read_count_per_sec = 0;
-
-                                warn!("Circuit breaker detects overload! Current overload seconds count is {}", instance.overload_read_count_per_sec);
-                            }
-
-                            if instance.overload_read_count_per_sec
-                                >= instance.overload_trelance_sec
-                            {
-                                panic!("Too many requests! breaking circuit!");
-                            }
-                        }
-                        std::thread::sleep(Duration::from_secs(1));
-                    }
-                });
-
-                return CIRCUIT_BREAKER_GLOBAL.get().unwrap();
-            }
-        }
-
-        fn readed() {
-            let mut instance = Self::global().lock().unwrap();
-
-            instance.read_count_per_sec += 1;
-        }
-    }
-
-    pub async fn get(url: Url) -> reqwest::Result<reqwest::Response> {
-        CircuitBreaker::readed();
-        reqwest::get(url).await
-    }
-
-    pub async fn ws_connect_async(
-        url: Url,
-    ) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, Response), Error> {
-        tokio_tungstenite::connect_async(url).await
-    }
-}
+ */
 
 enum Strategy {
     MisskeyDirect,
@@ -265,7 +162,7 @@ async fn get_remote_software(host: &Url) -> Result<Strategy> {
     }
 }
 
-#[async_trait]
+/*#[async_trait]
 impl StreamingStrategy for MisskeyDirectStreaming {
     fn event_receiver(self: Box<Self>) -> SingleChannelReceiver<Timeline> {
         self.receiver
@@ -273,7 +170,7 @@ impl StreamingStrategy for MisskeyDirectStreaming {
     fn get_strategy_id(&self) -> &'static str {
         "misskey-direct-connect"
     }
-}
+}*/
 
 async fn authorized(req: &HttpRequest) -> bool {
     // TODO: miauth
@@ -296,9 +193,9 @@ impl Actor for StreamingClient {
 struct TimelineStreamingActor {
     dest: Vec<Addr<StreamingClient>>,
 }
-
+/*
 impl TimelineStreamingActor {
-    pub fn start(timeline_stream: std::pin::Pin<Box<dyn Stream<Item = Timeline>>>) -> Addr<Self> {
+    pub fn start(timeline_stream: std::pin::Pin<Box<dyn Stream<Item = Post>>>) -> Addr<Self> {
         Self::create(|ctx| {
             ctx.add_stream(timeline_stream);
             Self { dest: Vec::new() }
@@ -329,6 +226,7 @@ impl Handler<StreamingError> for TimelineStreamingActor {
 impl Message for StreamingError {
     type Result = ();
 }
+ */
 
 static TIMELINE_STREAM_WEBSOCKET_SUPERVISOR: Lazy<Addr<TimelineStreamSupervisorActor>> =
     Lazy::new(|| TimelineStreamSupervisorActor::new());

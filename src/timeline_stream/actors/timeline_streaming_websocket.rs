@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use crate::types::Host;
 
 use super::timeline_streaming::{
-    RequestTimelineStreamer, TimelineMessage, TimelineStreamSupervisorActor, TimelineStreamerActor, RequestTimelineStream,
+    RequestTimelineStreamer, TimelineMessage, TimelineStreamSupervisorActor, TimelineStreamerActor, RequestTimelineStream, HEARTBEAT_DURATION, HeartbeatMessage,
 };
 
 pub struct TimelineStreamWebsocket {
@@ -42,7 +42,19 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for TimelineStreamWeb
                 .unwrap()
                 .unwrap();
 
-            stream.do_send(RequestTimelineStream::new(self_addr.recipient()));
+            let result = stream.send(RequestTimelineStream::new(self_addr.clone().recipient())).await;
+
+            if result.is_ok() {
+                self_addr.do_send(SetStreamerAddr { addr: stream });
+            } else {
+                
+            }
+        });
+
+        ctx.run_interval(HEARTBEAT_DURATION, |actor, ctx| {
+            if let Some(stream_addr) = &actor.stream {
+                stream_addr.do_send(HeartbeatMessage::new(ctx.address().recipient()))
+            }
         });
     }
 
@@ -60,5 +72,19 @@ impl Handler<TimelineMessage> for TimelineStreamWebsocket {
 
     fn handle(&mut self, msg: TimelineMessage, ctx: &mut Self::Context) -> Self::Result {
         ctx.text(serde_json::to_string(msg.get()).unwrap());
+    }
+}
+
+struct SetStreamerAddr{addr:Addr<TimelineStreamerActor>}
+
+impl Message for SetStreamerAddr {
+    type Result = ();
+}
+
+impl Handler<SetStreamerAddr> for TimelineStreamWebsocket {
+    type Result = ();
+
+    fn handle(&mut self, msg: SetStreamerAddr, ctx: &mut Self::Context) -> Self::Result {
+        self.stream = Some(msg.addr);
     }
 }

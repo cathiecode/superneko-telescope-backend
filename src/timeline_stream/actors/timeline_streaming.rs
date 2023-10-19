@@ -10,10 +10,12 @@ use actix::{
 };
 use anyhow::{anyhow, Result};
 use futures_util::Stream;
+use log::{debug, info};
 
-use crate::{stream, timeline_stream::stream::get_timeline_stream, types::Host, Timeline};
+use crate::{stream, timeline_stream::stream::get_timeline_stream, types::Host};
+use crate::types::json::Post;
 
-static HEARTBEAT_DURATION: Duration = Duration::from_secs(1);
+pub static HEARTBEAT_DURATION: Duration = Duration::from_secs(1);
 static HEARTBEAT_DURATION_TRELANCE: Duration = Duration::from_secs(2);
 
 // Actors
@@ -92,7 +94,7 @@ pub struct TimelineStreamerActor {
 
 impl TimelineStreamerActor {
     pub fn new(
-        timeline_stream: impl Stream<Item = Timeline> + 'static,
+        timeline_stream: impl Stream<Item = Post> + 'static,
         supervisor: Addr<TimelineStreamSupervisorActor>,
     ) -> Addr<Self> {
         Self::create(|ctx| {
@@ -110,7 +112,8 @@ impl Actor for TimelineStreamerActor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.run_interval(Duration::from_secs(60), |actor, ctx| {
+        info!("Started TimelineStreamerActor");
+        ctx.run_interval(HEARTBEAT_DURATION_TRELANCE, |actor, ctx| {
             let mut remove_list = Vec::new();
 
             for (receiver, last_heartbeat) in &actor.last_heartbeat {
@@ -120,6 +123,7 @@ impl Actor for TimelineStreamerActor {
             }
 
             for to_remove in remove_list {
+                info!("An recipient is disconnected from TimelineStreamerActor");
                 actor.last_heartbeat.remove(&to_remove);
             }
 
@@ -130,6 +134,7 @@ impl Actor for TimelineStreamerActor {
     }
 
     fn stopping(&mut self, ctx: &mut Self::Context) -> actix::Running {
+        info!("Stopping TimelineStreamerActor");
         // TODO: Check supervisor state before stop
         self.supervisor.do_send(TimelineStreamerStopMessage {
             addr: ctx.address(),
@@ -138,10 +143,10 @@ impl Actor for TimelineStreamerActor {
     }
 }
 
-impl StreamHandler<Timeline> for TimelineStreamerActor {
-    fn handle(&mut self, item: Timeline, ctx: &mut Self::Context) {
+impl StreamHandler<Post> for TimelineStreamerActor {
+    fn handle(&mut self, item: Post, ctx: &mut Self::Context) {
         for (recipient, last_heartbeat) in &self.last_heartbeat {
-            recipient.do_send(TimelineMessage { timeline: item.clone() });
+            recipient.do_send(TimelineMessage { post: item.clone() });
         }
     }
 }
@@ -163,7 +168,7 @@ impl Handler<RequestTimelineStream> for TimelineStreamerActor {
 }
 
 // Messages
-struct HeartbeatMessage {
+pub struct HeartbeatMessage {
     addr: Recipient<TimelineMessage>,
 }
 
@@ -171,13 +176,21 @@ impl Message for HeartbeatMessage {
     type Result = ();
 }
 
+impl HeartbeatMessage {
+    pub fn new(addr: Recipient<TimelineMessage>) -> Self {
+        Self {
+            addr
+        }
+    }
+}
+
 pub struct TimelineMessage {
-    timeline: Timeline,
+    post: Post,
 }
 
 impl TimelineMessage {
-    pub fn get(&self) -> &Timeline {
-        &self.timeline
+    pub fn get(&self) -> &Post {
+        &self.post
     }
 }
 
