@@ -7,12 +7,12 @@ use actix::{
     Actor, ActorContext, ActorFutureExt, Addr, AsyncContext, Context, Handler, Message, Recipient,
     ResponseActFuture, StreamHandler, WrapFuture,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures_util::Stream;
 use log::info;
 
-use crate::{timeline_stream::stream::get_timeline_stream, types::Host};
 use crate::types::json::Post;
+use crate::{timeline::stream::get_timeline_stream, types::Host};
 
 pub static HEARTBEAT_DURATION: Duration = Duration::from_secs(1);
 static HEARTBEAT_DURATION_TRELANCE: Duration = Duration::from_secs(2);
@@ -64,14 +64,19 @@ impl Handler<RequestTimelineStreamer> for TimelineStreamSupervisorActor {
             let host2 = msg.host.clone();
             Box::pin(
                 async {
-                    let new_stream = get_timeline_stream(host).await.unwrap().get_stream();
-
-                    TimelineStreamerActor::new(new_stream, self_address)
+                    get_timeline_stream(host)
+                        .await
+                        .map(|strategy| strategy.get_stream())
+                        .map(|new_stream| TimelineStreamerActor::new(new_stream, self_address))
                 }
                 .into_actor(self)
-                .map(move |streamer, actor, _| {
-                    actor.streamers.insert(host2, streamer.clone());
-                    Ok(streamer)
+                .map(move |streamer_or_error, actor, _| {
+                    if let Ok(streamer) = streamer_or_error {
+                        actor.streamers.insert(host2, streamer.clone());
+                        Ok(streamer)
+                    } else {
+                        Err(anyhow!("test"))
+                    }
                 }),
             )
         }
@@ -93,11 +98,11 @@ pub struct TimelineStreamerActor {
 
 impl TimelineStreamerActor {
     pub fn new(
-        timeline_stream: impl Stream<Item = Post> + 'static,
+        timeline: impl Stream<Item = Post> + 'static,
         supervisor: Addr<TimelineStreamSupervisorActor>,
     ) -> Addr<Self> {
         Self::create(|ctx| {
-            ctx.add_stream(timeline_stream);
+            ctx.add_stream(timeline);
 
             TimelineStreamerActor {
                 last_heartbeat: HashMap::new(),
@@ -177,9 +182,7 @@ impl Message for HeartbeatMessage {
 
 impl HeartbeatMessage {
     pub fn new(addr: Recipient<TimelineMessage>) -> Self {
-        Self {
-            addr
-        }
+        Self { addr }
     }
 }
 
@@ -220,14 +223,12 @@ impl Message for RequestTimelineStreamer {
 }
 
 pub struct RequestTimelineStream {
-    addr: Recipient<TimelineMessage>
+    addr: Recipient<TimelineMessage>,
 }
 
 impl RequestTimelineStream {
     pub fn new(addr: Recipient<TimelineMessage>) -> Self {
-        Self {
-            addr
-        }
+        Self { addr }
     }
 }
 

@@ -1,6 +1,7 @@
 use actix::{Actor, Addr, Handler, StreamHandler, AsyncContext, Message};
-use actix_web_actors::ws::{self, WebsocketContext};
+use actix_web_actors::ws::{self, WebsocketContext, CloseReason, CloseCode};
 use async_trait::async_trait;
+use log::error;
 
 use crate::types::Host;
 
@@ -35,19 +36,22 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for TimelineStreamWeb
         let supervisor = self.stream_supervisor.clone();
         let self_addr = ctx.address();
         actix::spawn(async move {
-            // TODO: Do not unwrap
-            let stream = supervisor
+            let stream_or_send_error = supervisor
                 .send(RequestTimelineStreamer::new(host))
-                .await
-                .unwrap()
-                .unwrap();
+                .await;
 
-            let result = stream.send(RequestTimelineStream::new(self_addr.clone().recipient())).await;
+            if let Ok(Ok(stream)) = stream_or_send_error {
+                let result = stream.send(RequestTimelineStream::new(self_addr.clone().recipient())).await;
 
-            if result.is_ok() {
-                self_addr.do_send(SetStreamerAddr { addr: stream });
+                if result.is_ok() {
+                    self_addr.do_send(SetStreamerAddr { addr: stream });
+                } else {
+                    // TODO: Close
+                    //ctx.close(Some(CloseCode::Abnormal.into()));
+                }
             } else {
-                
+                // TODO: Close
+                error!("{:?}", stream_or_send_error);
             }
         });
 
@@ -71,7 +75,7 @@ impl Handler<TimelineMessage> for TimelineStreamWebsocket {
     type Result = ();
 
     fn handle(&mut self, msg: TimelineMessage, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(serde_json::to_string(msg.get()).unwrap());
+        ctx.text(serde_json::to_string(msg.get()).unwrap());  // NOTE: できなかったらプログラムミス
     }
 }
 
@@ -86,5 +90,22 @@ impl Handler<SetStreamerAddr> for TimelineStreamWebsocket {
 
     fn handle(&mut self, msg: SetStreamerAddr, _ctx: &mut Self::Context) -> Self::Result {
         self.stream = Some(msg.addr);
+    }
+}
+
+struct StreamReply {
+    json: serde_json::Value
+}
+
+impl Message for StreamReply {
+    type Result = ();
+}
+
+impl Handler<StreamReply> for TimelineStreamWebsocket {
+    type Result = ();
+
+    fn handle(&mut self, msg: StreamReply, ctx: &mut Self::Context) -> Self::Result {
+        let str = serde_json::to_string(&msg.json).unwrap(); // NOTE: できなかったらプログラムミス
+        ctx.text(str)
     }
 }

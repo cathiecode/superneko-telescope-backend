@@ -2,7 +2,7 @@ use std::{sync::Mutex, time::Duration};
 
 use log::{debug, warn};
 use once_cell::sync::OnceCell;
-use reqwest;
+use reqwest::{self, Body, RequestBuilder};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
     tungstenite::{handshake::client::Response, Error},
@@ -32,7 +32,7 @@ impl CircuitBreaker {
             }));
 
             if let Err(_) = result {
-                CIRCUIT_BREAKER_GLOBAL.get().unwrap();
+                CIRCUIT_BREAKER_GLOBAL.get().unwrap(); // NOTE: できなかったらプログラムミス
             }
 
             std::thread::spawn(|| {
@@ -40,7 +40,7 @@ impl CircuitBreaker {
                 loop {
                     {
                         let mut instance =
-                            CIRCUIT_BREAKER_GLOBAL.get().unwrap().lock().unwrap();
+                            CIRCUIT_BREAKER_GLOBAL.get().unwrap().lock().unwrap(); // NOTE: できなかったらプログラムミス
 
                         if instance.read_count_per_sec >= instance.overload_read_count_per_sec {
                             instance.overload_read_count_per_sec += 1;
@@ -59,12 +59,12 @@ impl CircuitBreaker {
                 }
             });
 
-            return CIRCUIT_BREAKER_GLOBAL.get().unwrap();
+            return CIRCUIT_BREAKER_GLOBAL.get().unwrap(); // NOTE: できなかったらプログラムミス
         }
     }
 
     fn readed() {
-        let mut instance = Self::global().lock().unwrap();
+        let mut instance = Self::global().lock().unwrap(); // NOTE: できなかったらプログラムミス
 
         instance.read_count_per_sec += 1;
     }
@@ -73,6 +73,13 @@ impl CircuitBreaker {
 pub async fn get(url: Url) -> reqwest::Result<reqwest::Response> {
     CircuitBreaker::readed();
     reqwest::get(url).await
+}
+
+pub async fn request(request: RequestBuilder) -> reqwest::Result<reqwest::Response> {
+    CircuitBreaker::readed();
+    request.send().await
+    /*;
+    client.post(url).body(body)*/
 }
 
 pub async fn ws_connect_async(
