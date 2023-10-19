@@ -1,21 +1,27 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
-use actix::{Actor, Context, StreamHandler, Addr, AsyncContext, Handler, Message};
-use actix_web::{dev::Service, get, web, HttpRequest, HttpResponse, HttpServer, Responder, cookie::time::Time};
+use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, StreamHandler};
+use actix_web::{
+    cookie::time::Time, dev::Service, get, web, HttpRequest, HttpResponse, HttpServer, Responder,
+};
 use actix_web_actors::ws;
 use anyhow::{anyhow, Result};
 use async_stream::stream;
 use async_trait::async_trait;
 use env_logger;
-use futures_util::{stream::StreamExt, SinkExt, Stream, TryFutureExt, Future};
+use futures_util::{stream::StreamExt, Future, SinkExt, Stream, TryFutureExt};
 use log::{debug, error, warn};
+use once_cell::sync::Lazy;
 use reqwest::header::HeaderValue;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use timeline_stream::actors::timeline_streaming::TimelineStreamSupervisorActor;
 use url::Url;
 
-mod types;
+use crate::{timeline_stream::actors::timeline_streaming_websocket::TimelineStreamWebsocket, types::Host};
+
 mod timeline_stream;
+mod types;
 
 struct GetTimelineOption {
     until: Option<i32>,
@@ -29,7 +35,7 @@ type SingleChannelSender<T> = tokio::sync::mpsc::Sender<T>;
 
 type Date = chrono::DateTime<chrono::Utc>;
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct Instance {
     name: String,
     softwareName: String,
@@ -38,7 +44,7 @@ struct Instance {
     themeColor: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct User {
     name: String,
     username: String,
@@ -46,15 +52,13 @@ struct User {
     instance: Instance,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct TimelineItem {
-    createdAt: Date,
+    //created_at: Date,
     user: User,
 }
 
 type Timeline = Vec<TimelineItem>;
-
-struct TimelineStreamReceiver {}
 
 #[async_trait]
 trait StreamingStrategy {
@@ -261,90 +265,6 @@ async fn get_remote_software(host: &Url) -> Result<Strategy> {
     }
 }
 
-async fn get_stream(host: Url) -> Result<Box<dyn StreamingStrategy>> {
-    match get_remote_software(&host).await? {
-        Strategy::MisskeyDirect => {
-            debug!("Host {} seems to be running Misskey.", &host);
-            Ok(Box::new(MisskeyDirectStreaming::new(host).await?))
-        }
-    }
-}
-
-async fn misskey_direct_streaming(mut host: Url) -> Result<impl Stream<Item = Timeline>> {
-    host.set_scheme("wss").unwrap();
-    let wsurl = host.join("/streaming").unwrap();
-
-    debug!("Connecting to {:?}", host.to_string());
-    let (mut write, mut read) = http_client::ws_connect_async(wsurl.clone()).await?.0.split();
-
-    write
-        .send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({
-                "type": "connect",
-                "body": {
-                    "channel": "globalTimeline", // TODO: localTimelineにする
-                    "id": "ltl"
-                }
-            })
-            .to_string(),
-        ))
-        .await?;
-
-    Ok(stream! {
-        debug!("Receive thread start!");
-
-        while let Some(item) = read.next().await {
-            match item {
-                Ok(message) => match message {
-                    tokio_tungstenite::tungstenite::Message::Text(text) => {
-                        let json = serde_json::from_str::<serde_json::value::Value>(&text);
-
-                        match json {
-                            Ok(json) => debug!("Received json {}", &json.to_string()),
-                            Err(_) => debug!("Received non-json {:?}", &text),
-                        };
-
-                        yield vec![]; // TODO
-                    }
-                    _ => debug!("Received non-text {:?}", message),
-                },
-                Err(error) => {
-                    // TODO: error
-                    error!("{:?}", error);
-                }
-            };
-        }
-
-        debug!("Disconnected from {}", &wsurl);
-
-        yield Vec::new();
-    })
-
-    // NOTE: Constant literal changes does not returns error.
-    /*
-
-    /*
-
-        /*loop {
-            if let Err(e) = write.send("h".into()).await {
-                warn!("Seems disconnected from {}", &wsurl);
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-        }
-
-    Ok(stream!{
-        let wsurl = wsurl.clone();
-            // TODO: heartbeat & kill detection
-            debug!("Heartbeat");
-
-            debug!("Receive thread start!");
-
-
-
-        })*/ */ */
-}
-
-
 #[async_trait]
 impl StreamingStrategy for MisskeyDirectStreaming {
     fn event_receiver(self: Box<Self>) -> SingleChannelReceiver<Timeline> {
@@ -368,23 +288,20 @@ async fn authorized(req: &HttpRequest) -> bool {
 
 struct StreamingClient;
 struct StreamingError;
-struct AddClientRequest;
 
 impl Actor for StreamingClient {
     type Context = Context<Self>;
 }
 
 struct TimelineStreamingActor {
-    dest: Vec<Addr<StreamingClient>>
+    dest: Vec<Addr<StreamingClient>>,
 }
 
 impl TimelineStreamingActor {
     pub fn start(timeline_stream: std::pin::Pin<Box<dyn Stream<Item = Timeline>>>) -> Addr<Self> {
         Self::create(|ctx| {
             ctx.add_stream(timeline_stream);
-            Self {
-                dest: Vec::new()
-            }
+            Self { dest: Vec::new() }
         })
     }
 }
@@ -392,9 +309,7 @@ impl TimelineStreamingActor {
 impl Actor for TimelineStreamingActor {
     type Context = actix::Context<Self>;
 
-    fn stopped(&mut self, ctx: &mut Self::Context) {
-        
-    }
+    fn stopped(&mut self, ctx: &mut Self::Context) {}
 }
 
 impl StreamHandler<Timeline> for TimelineStreamingActor {
@@ -415,21 +330,29 @@ impl Message for StreamingError {
     type Result = ();
 }
 
+static TIMELINE_STREAM_WEBSOCKET_SUPERVISOR: Lazy<Addr<TimelineStreamSupervisorActor>> =
+    Lazy::new(|| TimelineStreamSupervisorActor::new());
 
 #[get("/")]
 async fn index() -> impl Responder {
-    HttpResponse::Ok().json(json!({"version": "0.0.0"}))
+    HttpResponse::Ok().message_body(json!({"version": "0.0.0"}).to_string())
 }
 
 #[get("/stream/{server}")]
-async fn stream(req: HttpRequest, path: web::Path<(String,)>) -> impl Responder {
+async fn stream(req: HttpRequest, stream: web::Payload, path: web::Path<(String,)>) -> impl Responder {
     if !authorized(&req).await {
         return HttpResponse::Unauthorized().into();
     }
 
     let (server,) = path.into_inner();
 
-    HttpResponse::Ok().json(json!({"requested": server}))
+    let host = Host::new(server.parse::<Url>().unwrap());
+
+    ws::start(
+        TimelineStreamWebsocket::new(host, TIMELINE_STREAM_WEBSOCKET_SUPERVISOR.clone()),
+        &req,
+        stream,
+    ).unwrap()
 }
 
 #[actix_web::main]
