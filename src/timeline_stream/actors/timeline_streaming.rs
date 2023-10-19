@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    pin::pin,
     time::{self, Duration},
 };
 
@@ -8,11 +7,11 @@ use actix::{
     Actor, ActorContext, ActorFutureExt, Addr, AsyncContext, Context, Handler, Message, Recipient,
     ResponseActFuture, StreamHandler, WrapFuture,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use futures_util::Stream;
-use log::{debug, info};
+use log::info;
 
-use crate::{stream, timeline_stream::stream::get_timeline_stream, types::Host};
+use crate::{timeline_stream::stream::get_timeline_stream, types::Host};
 use crate::types::json::Post;
 
 pub static HEARTBEAT_DURATION: Duration = Duration::from_secs(1);
@@ -33,7 +32,7 @@ impl Handler<TimelineStreamerStopMessage> for TimelineStreamSupervisorActor {
     fn handle(
         &mut self,
         msg: TimelineStreamerStopMessage,
-        ctx: &mut Self::Context,
+        _ctx: &mut Self::Context,
     ) -> Self::Result {
         let mut host_to_remove = None;
 
@@ -144,8 +143,8 @@ impl Actor for TimelineStreamerActor {
 }
 
 impl StreamHandler<Post> for TimelineStreamerActor {
-    fn handle(&mut self, item: Post, ctx: &mut Self::Context) {
-        for (recipient, last_heartbeat) in &self.last_heartbeat {
+    fn handle(&mut self, item: Post, _ctx: &mut Self::Context) {
+        for (recipient, _last_heartbeat) in &self.last_heartbeat {
             recipient.do_send(TimelineMessage { post: item.clone() });
         }
     }
@@ -162,7 +161,7 @@ impl Handler<HeartbeatMessage> for TimelineStreamerActor {
 impl Handler<RequestTimelineStream> for TimelineStreamerActor {
     type Result = ();
 
-    fn handle(&mut self, msg: RequestTimelineStream, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: RequestTimelineStream, _ctx: &mut Self::Context) -> Self::Result {
         self.last_heartbeat.insert(msg.addr, time::Instant::now());
     }
 }

@@ -1,22 +1,21 @@
-use std::{collections::HashMap, str::FromStr, sync::Arc};
 
-use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, StreamHandler};
+
+use actix::{Actor, Addr, Context};
 use actix_web::{
-    cookie::time::Time, dev::Service, get, web, HttpRequest, HttpResponse, HttpServer, Responder,
+    get, web, HttpRequest, HttpResponse, Responder,
 };
 use actix_web_actors::ws;
 use anyhow::{anyhow, Result};
-use async_stream::stream;
-use async_trait::async_trait;
+
+
 use env_logger;
-use futures_util::{stream::StreamExt, Future, SinkExt, Stream, TryFutureExt};
-use log::{debug, error, warn};
+
 use once_cell::sync::Lazy;
-use reqwest::header::HeaderValue;
-use serde::{Deserialize, Serialize};
+
+use serde::Deserialize;
 use serde_json::json;
 use timeline_stream::actors::timeline_streaming::TimelineStreamSupervisorActor;
-use types::json::Post;
+
 use url::Url;
 
 use crate::{timeline_stream::actors::timeline_streaming_websocket::TimelineStreamWebsocket, types::Host};
@@ -174,7 +173,7 @@ impl StreamingStrategy for MisskeyDirectStreaming {
 
 async fn authorized(req: &HttpRequest) -> bool {
     // TODO: miauth
-    let authorized = req
+    let _authorized = req
         .headers()
         .get("Authorized")
         .map(|authorized| authorized.to_str().unwrap_or(""))

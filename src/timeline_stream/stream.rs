@@ -1,10 +1,10 @@
 use anyhow::Result;
-use async_stream::stream;
-use futures_util::{SinkExt, Stream, StreamExt};
-use log::{debug, error, log_enabled, warn};
+
+use futures_util::Stream;
+use log::debug;
 
 use crate::misskey::MisskeyDirectStreaming;
-use crate::{get_remote_software, http_client, types::Host, Strategy};
+use crate::{get_remote_software, types::Host, Strategy};
 use crate::types::json::Post;
 
 

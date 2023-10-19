@@ -84,7 +84,7 @@ impl Message for SetStreamerAddr {
 impl Handler<SetStreamerAddr> for TimelineStreamWebsocket {
     type Result = ();
 
-    fn handle(&mut self, msg: SetStreamerAddr, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: SetStreamerAddr, _ctx: &mut Self::Context) -> Self::Result {
         self.stream = Some(msg.addr);
     }
 }
