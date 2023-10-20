@@ -28,3 +28,4 @@ tokio-stream = "0.1.14"
 tokio-tungstenite = { version = "0.20.1", features = ["native-tls"] }
 url = "2.4.1"
 misskey = "0.3.0-rc.1"
+actix-cors = "0.6.4"

@@ -1,5 +1,6 @@
 use actix::{Actor, Addr, Context};
-use actix_web::{body::MessageBody, get, web, Either, HttpRequest, HttpResponse, Responder};
+use actix_cors::Cors;
+use actix_web::{body::MessageBody, get, web, Either, HttpRequest, HttpResponse, Responder, post};
 use actix_web_actors::ws;
 use anyhow::{anyhow, Error, Result};
 
@@ -130,7 +131,7 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().message_body(json!({"version": "0.0.0"}).to_string())
 }
 
-#[get("/stream/{server}")]
+#[get("/api/stream/{server}")]
 async fn stream(
     req: HttpRequest,
     stream: web::Payload,
@@ -148,24 +149,22 @@ async fn stream(
         TimelineStreamWebsocket::new(host, TIMELINE_STREAM_WEBSOCKET_SUPERVISOR.clone()),
         &req,
         stream,
-    ).map_err(|e| actix_web::error::ErrorUpgradeRequired(e))?)
+    )
+    .map_err(|e| actix_web::error::ErrorUpgradeRequired(e))?)
 }
 
-#[get("/timeline/{server}")]
+#[post("/api/timeline/{server}")]
 async fn get_timeline(
     path: web::Path<(String,)>,
-    option: web::Query<FetchOption>,
+    option: web::Json<FetchOption>,
 ) -> actix_web::Result<HttpResponse, actix_web::error::Error> {
     let (server,) = path.into_inner();
     let result = timeline::fetch::get_timeline(
         Host::new(server.parse::<Url>().unwrap()), // NOTE: できなかったらプログラムミス
-        option
-            .into_inner()
-            .try_into()
-            .map_err(|e| {
-                error!("{:?}", e);
-                actix_web::error::ErrorInternalServerError(e)
-            })?
+        option.into_inner().try_into().map_err(|e| {
+            error!("{:?}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?,
     )
     .await
     .map_err(|e| {
@@ -187,10 +186,26 @@ async fn get_timeline(
 async fn main() -> std::io::Result<()> {
     env_logger::init();
 
-    actix_web::HttpServer::new(|| actix_web::App::new().service(index).service(stream).service(get_timeline))
-        .bind(("127.0.0.1", 8080))?
-        .run()
-        .await
+    actix_web::HttpServer::new(|| {
+        let cors = Cors::default()
+            .allowed_origin("http://localhost:3000") // TODO: 外からAllowed originを差し込めるようにする
+            .allowed_methods(vec!["GET", "POST"])
+            .allowed_headers(vec![
+                actix_web::http::header::AUTHORIZATION,
+                actix_web::http::header::ACCEPT,
+            ])
+            .allowed_header(actix_web::http::header::CONTENT_TYPE)
+            .max_age(3600);
+
+        actix_web::App::new()
+            .wrap(cors)
+            .service(index)
+            .service(stream)
+            .service(get_timeline)
+    })
+    .bind(("127.0.0.1", 8000))?
+    .run()
+    .await
 
     /*
 
