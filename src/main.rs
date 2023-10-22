@@ -1,6 +1,6 @@
 use actix::{Actor, Addr, Context};
 use actix_cors::Cors;
-use actix_web::{body::MessageBody, get, web, Either, HttpRequest, HttpResponse, Responder, post};
+use actix_web::{body::MessageBody, get, post, web, Either, HttpRequest, HttpResponse, Responder};
 use actix_web_actors::ws;
 use anyhow::{anyhow, Error, Result};
 
@@ -9,7 +9,7 @@ use env_logger;
 use log::error;
 use once_cell::sync::Lazy;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use timeline::actors::timeline_streaming::TimelineStreamSupervisorActor;
 
@@ -24,6 +24,11 @@ mod timeline;
 mod types;
 
 #[derive(Debug, Deserialize)]
+struct NodeInfoMetaData {
+    nodeName: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct NodeInfoSoftware {
     name: String,
     version: String,
@@ -32,14 +37,21 @@ struct NodeInfoSoftware {
 #[derive(Debug, Deserialize)]
 struct NodeInfo {
     software: NodeInfoSoftware,
+    metadata: NodeInfoMetaData,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 enum RemoteSoftware {
-    MisskeyDirect,
+    Misskey,
 }
 
-async fn get_remote_software(host: &Url) -> Result<RemoteSoftware> {
+#[derive(Serialize)]
+struct RemoteInfo {
+    name: Option<String>,
+    software: RemoteSoftware,
+}
+
+async fn get_remote_info(host: &Url) -> Result<RemoteInfo> {
     let nodeinfo_text = http_client::get(host.join("nodeinfo/2.0")?)
         .await?
         .text()
@@ -47,14 +59,19 @@ async fn get_remote_software(host: &Url) -> Result<RemoteSoftware> {
 
     let nodeinfo_struct = serde_json::from_str::<NodeInfo>(&nodeinfo_text)?;
 
-    match nodeinfo_struct.software.name.as_str() {
-        "misskey" => return Ok(RemoteSoftware::MisskeyDirect),
+    let software = match nodeinfo_struct.software.name.as_str() {
+        "misskey" => RemoteSoftware::Misskey,
         _ => {
             return Err(anyhow!(
                 "The software".to_owned() + &nodeinfo_struct.software.name + " is not supported."
             ))
         }
-    }
+    };
+
+    Ok(RemoteInfo {
+        name: nodeinfo_struct.metadata.nodeName,
+        software,
+    })
 }
 
 /*#[async_trait]
@@ -141,26 +158,35 @@ async fn stream(
         return Err(actix_web::error::ErrorForbidden("Authentication Required"));
     }
 
-    let (server,) = path.into_inner();
-
-    let host = Host::new(server.parse::<Url>().unwrap()); // NOTE: できなかったらプログラムミス
+    let server = Host::new(
+        path.into_inner().0
+            .parse::<Url>()
+            .map_err(|e| actix_web::error::ErrorBadRequest(e))?,
+    )
+    .map_err(|e| actix_web::error::ErrorBadRequest(e))?;
 
     Ok(ws::start(
-        TimelineStreamWebsocket::new(host, TIMELINE_STREAM_WEBSOCKET_SUPERVISOR.clone()),
+        TimelineStreamWebsocket::new(server, TIMELINE_STREAM_WEBSOCKET_SUPERVISOR.clone()),
         &req,
         stream,
     )
     .map_err(|e| actix_web::error::ErrorUpgradeRequired(e))?)
 }
 
-#[post("/api/timeline/{server}")]
+#[post("/api/timeline")]
 async fn get_timeline(
-    path: web::Path<(String,)>,
     option: web::Json<FetchOption>,
 ) -> actix_web::Result<HttpResponse, actix_web::error::Error> {
-    let (server,) = path.into_inner();
+    let server = Host::new(
+        option
+            .server
+            .parse::<Url>()
+            .map_err(|e| actix_web::error::ErrorBadRequest(e))?,
+    )
+    .map_err(|e| actix_web::error::ErrorBadRequest(e))?;
+
     let result = timeline::fetch::get_timeline(
-        Host::new(server.parse::<Url>().unwrap()), // NOTE: できなかったらプログラムミス
+        server,
         option.into_inner().try_into().map_err(|e| {
             error!("{:?}", e);
             actix_web::error::ErrorInternalServerError(e)
@@ -168,6 +194,38 @@ async fn get_timeline(
     )
     .await
     .map_err(|e| {
+        error!("{:?}", e);
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
+
+    HttpResponse::Ok().message_body(
+        serde_json::to_string(&result)
+            .map_err(|e| {
+                error!("{:?}", e);
+                actix_web::error::ErrorInternalServerError(e)
+            })?
+            .boxed(),
+    )
+}
+
+#[derive(Deserialize)]
+struct FetchNodeinfoOption {
+    host: String,
+}
+
+#[derive(Serialize)]
+struct FetchNodeInfoResult {
+    name: String,
+}
+
+#[post("/api/nodeinfo")]
+async fn get_node_info(option: web::Json<FetchNodeinfoOption>) -> impl Responder {
+    let url = option.host.parse().map_err(|e| {
+        error!("{:?}", e);
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
+
+    let result = get_remote_info(&url).await.map_err(|e| {
         error!("{:?}", e);
         actix_web::error::ErrorInternalServerError(e)
     })?;
@@ -202,6 +260,7 @@ async fn main() -> std::io::Result<()> {
             .service(index)
             .service(stream)
             .service(get_timeline)
+            .service(get_node_info)
     })
     .bind(("127.0.0.1", 8000))?
     .run()

@@ -5,7 +5,7 @@ use log::debug;
 
 use crate::RemoteSoftware;
 use crate::misskey::MisskeyDirectStreaming;
-use crate::{get_remote_software, types::Host};
+use crate::{get_remote_info, types::Host};
 use crate::types::json::Post;
 
 pub trait StreamingStrategy {
@@ -14,8 +14,8 @@ pub trait StreamingStrategy {
 }
 
 pub async fn get_timeline_stream(host: Host) -> Result<Box<dyn StreamingStrategy>> {
-    match get_remote_software(&host.base_url()).await? {
-        RemoteSoftware::MisskeyDirect => {
+    match get_remote_info(&host.base_url()).await?.software {
+        RemoteSoftware::Misskey => {
             debug!("Host {} seems to be running Misskey.", &host.base_url());
             Ok(Box::new(MisskeyDirectStreaming::new(host).await?))
         }

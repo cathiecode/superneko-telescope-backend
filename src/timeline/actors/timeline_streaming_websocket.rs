@@ -1,5 +1,5 @@
 use actix::{Actor, Addr, Handler, StreamHandler, AsyncContext, Message};
-use actix_web_actors::ws::{self, WebsocketContext, CloseReason, CloseCode};
+use actix_web_actors::ws::{self, WebsocketContext};
 use async_trait::async_trait;
 use log::error;
 

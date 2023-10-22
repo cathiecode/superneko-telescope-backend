@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    get_remote_software,
+    get_remote_info,
     misskey::MisskeyDirectFetching,
     types::{
         json::{self, Post},
@@ -11,7 +11,6 @@ use crate::{
 };
 use anyhow::{anyhow, Error, Result};
 use async_trait::async_trait;
-use futures_util::future::Remote;
 use log::debug;
 use once_cell::sync::Lazy;
 
@@ -57,11 +56,11 @@ async fn get_timeline_fetcher(host: Host) -> Result<Box<dyn FetchStrategy>> {
     let strategy = if let Some(strategy) = FETCH_STRATEGY.get(&host) {
         strategy.clone()
     } else {
-        get_remote_software(&host.base_url()).await?
+        get_remote_info(&host.base_url()).await?.software
     };
 
     match strategy {
-        RemoteSoftware::MisskeyDirect => {
+        RemoteSoftware::Misskey => {
             debug!("Host {} seems to be running Misskey.", &host.base_url());
             Ok(Box::new(MisskeyDirectFetching::new(host.clone())))
         }

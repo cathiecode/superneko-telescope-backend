@@ -12,7 +12,8 @@ use url::Url;
 
 struct CircuitBreaker {
     read_count_per_sec: i32,
-    overload_read_count_per_sec: i32,
+    overload_threshold_read_count_per_sec: i32,
+    overload_sec: i32,
     overload_trelance_sec: i32,
 }
 
@@ -26,9 +27,9 @@ impl CircuitBreaker {
             debug!("Circuit breaker initialized.");
             let result = CIRCUIT_BREAKER_GLOBAL.set(Mutex::new(Self {
                 read_count_per_sec: 0,
-                overload_read_count_per_sec: 0,
-
-                overload_trelance_sec: 5,
+                overload_threshold_read_count_per_sec: 10,
+                overload_sec: 0,
+                overload_trelance_sec: 3,
             }));
 
             if let Err(_) = result {
@@ -42,18 +43,21 @@ impl CircuitBreaker {
                         let mut instance =
                             CIRCUIT_BREAKER_GLOBAL.get().unwrap().lock().unwrap(); // NOTE: できなかったらプログラムミス
 
-                        if instance.read_count_per_sec >= instance.overload_read_count_per_sec {
-                            instance.overload_read_count_per_sec += 1;
-                            instance.read_count_per_sec = 0;
+                        if instance.read_count_per_sec >= instance.overload_threshold_read_count_per_sec {
+                            instance.overload_sec += 1;
 
-                            warn!("Circuit breaker detects overload! Current overload seconds count is {}", instance.overload_read_count_per_sec);
+                            warn!("Circuit breaker detects overload! Current overload seconds count is {}", instance.overload_sec);
+                        } else {
+                            instance.overload_sec = 0;
                         }
 
-                        if instance.overload_read_count_per_sec
-                            >= instance.overload_trelance_sec
+                        if instance.overload_sec
+                            > instance.overload_trelance_sec
                         {
                             panic!("Too many requests! breaking circuit!");
                         }
+
+                        instance.read_count_per_sec = 0;
                     }
                     std::thread::sleep(Duration::from_secs(1));
                 }
